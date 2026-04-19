@@ -102,11 +102,53 @@ body {
   function sfxBuff(){ beep(520,0.08); setTimeout(function(){ beep(780,0.08); },90); setTimeout(function(){ beep(1040,0.12); },180); }
 
   function spawnTarget(){
+    var isStar = Math.random() < 0.12; // 12% chance for star
     var moving = Math.random() < 0.5;
     var r = (28 + Math.random()*18) * sizeMult;
-    var t = { x: moving ? -r : 60+Math.random()*(W-120), y: 60+Math.random()*(H-120), r: r, moving: moving, vx:0, vy:0, life: moving?Infinity:2200+Math.random()*800, age:0, dead:false, hit:false };
+    if (isStar) r = Math.max(22, r * 0.75); // stars are a bit smaller
+    var t = { x: moving ? -r : 60+Math.random()*(W-120), y: 60+Math.random()*(H-120), r: r, moving: moving, vx:0, vy:0, life: moving?Infinity:2400+Math.random()*800, age:0, dead:false, hit:false, isStar: isStar };
     if (moving){ var dir = Math.random()<0.5?1:-1; t.vx = (1.5+Math.random()*2)*speedMult*dir; if (dir<0) t.x = W+r; }
     targets.push(t);
+  }
+
+  function drawStar(t){
+    var x=t.x, y=t.y, r=t.r;
+    var pulse = 1 + Math.sin((t.age||0)*0.008 + x*0.01) * 0.06;
+    var R = r * pulse;
+    ctx.save();
+    // glow
+    ctx.shadowColor = '#ffd87a';
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = '#ffd54a';
+    ctx.strokeStyle = '#8b6a1f';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    var spikes = 5;
+    var outerR = R, innerR = R * 0.45;
+    var rot = -Math.PI/2;
+    for (var i=0; i<spikes*2; i++){
+      var rr = (i%2===0) ? outerR : innerR;
+      var a = rot + (i * Math.PI / spikes);
+      var px = x + Math.cos(a)*rr;
+      var py = y + Math.sin(a)*rr;
+      if (i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // inner highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.beginPath(); ctx.arc(x - R*0.2, y - R*0.2, R*0.18, 0, Math.PI*2); ctx.fill();
+    // fade-out for popup stars
+    if (!t.moving && t.life !== Infinity){
+      var remain = t.life - t.age;
+      if (remain < 600){
+        ctx.fillStyle='rgba(10,6,4,'+(1-remain/600)+')';
+        ctx.beginPath(); ctx.arc(x,y,R,0,Math.PI*2); ctx.fill();
+      }
+    }
+    ctx.restore();
   }
 
   function drawBoard(t){
@@ -209,26 +251,36 @@ body {
       for (var di=0; di<darts.length; di++){
         var d = darts[di];
         d.x += d.vx; d.y += d.vy; d.vy += 0.25; d.life -= 1;
-        if (d.life<=0 || d.x<-30 || d.x>W+30 || d.y>H+30){
-          if (!d.hit){ lives--; burst(d.x, Math.min(d.y,H-10), '#8b2d1f', 8); sfxMiss(); if (lives<=0) endGame(); }
-          d.dead = true;
-        }
-        if (!d.hit){
-          for (var mi=0; mi<targets.length; mi++){
-            var tg = targets[mi];
-            if (tg.dead || tg.hit) continue;
-            var rdx = d.x-tg.x, rdy = d.y-tg.y;
-            if (rdx*rdx + rdy*rdy < tg.r*tg.r){
-              d.hit=true; tg.hit=true; tg.dead=true;
+        // Pierce: check ALL targets every frame, no early break
+        for (var mi=0; mi<targets.length; mi++){
+          var tg = targets[mi];
+          if (tg.dead || tg.hit) continue;
+          var rdx = d.x-tg.x, rdy = d.y-tg.y;
+          if (rdx*rdx + rdy*rdy < tg.r*tg.r){
+            tg.hit=true; tg.dead=true; d.hits++;
+            if (tg.isStar){
+              lives++;
+              burst(tg.x, tg.y, '#ffd54a', 26);
+              sfxBuff();
+              particles.push({ x:tg.x, y:tg.y, vx:0, vy:-1.5, life:1.6, color:'#ffd54a', text:'+1 LIFE' });
+            } else {
               var rd = Math.hypot(rdx,rdy), pts = 10;
               if (rd < tg.r*0.15) pts = 100;
               else if (rd < tg.r*0.3) pts = 50;
               else if (rd < tg.r*0.4) pts = 30;
+              // Combo bonus: 2nd+ hit on same dart x1.5
+              if (d.hits >= 2) pts = Math.floor(pts * 1.5);
               score += pts; burst(tg.x, tg.y, '#ffd87a', 18); sfxHit();
               particles.push({ x:tg.x, y:tg.y, vx:0, vy:-1.5, life:1.2, color:'#ffd87a', text:'+'+pts });
-              break;
+              if (d.hits >= 2){
+                particles.push({ x:tg.x, y:tg.y-20, vx:0, vy:-1.2, life:1.4, color:'#ff6090', text:'COMBO x'+d.hits });
+              }
             }
           }
+        }
+        if (d.life<=0 || d.x<-30 || d.x>W+30 || d.y>H+30){
+          if (d.hits === 0){ lives--; burst(d.x, Math.min(d.y,H-10), '#8b2d1f', 8); sfxMiss(); if (lives<=0) endGame(); }
+          d.dead = true;
         }
       }
       for (var pi=0; pi<particles.length; pi++){ var pp = particles[pi]; pp.x += pp.vx; pp.y += pp.vy; pp.vy += 0.1; pp.life -= 0.025; }
@@ -237,7 +289,7 @@ body {
       particles = filterAlive(particles, 'life', 0);
       updateHUD();
     }
-    for (var a=0; a<targets.length; a++) drawBoard(targets[a]);
+    for (var a=0; a<targets.length; a++){ if (targets[a].isStar) drawStar(targets[a]); else drawBoard(targets[a]); }
     for (var b=0; b<darts.length; b++) drawDart(darts[b]);
     for (var c=0; c<particles.length; c++){
       var p = particles[c];
@@ -269,17 +321,49 @@ body {
     startBtn = byId('startBtn'); restartBtn = byId('restartBtn');
     finalScoreEl = byId('finalScore'); newRecordEl = byId('newRecord'); buffToast = byId('buffToast');
     best = +(storeGet('dartsBest') || 0); bestEl.textContent = best;
-    canvas.addEventListener('mousedown', function(e){ if (state!=='playing') return; aiming=true; aimStart=getMouse(e); aimCurrent=aimStart; });
-    canvas.addEventListener('mousemove', function(e){ if (!aiming) return; aimCurrent=getMouse(e); });
-    canvas.addEventListener('mouseup', function(e){
-      if (!aiming || state!=='playing'){ aiming=false; return; }
+    var capturedPointerId = null;
+    function releaseShot(e){
+      if (!aiming) return;
       var end = getMouse(e), dx = aimStart.x-end.x, dy = aimStart.y-end.y, dist = Math.hypot(dx,dy);
-      if (dist < 10){ aiming=false; return; }
+      aiming = false;
+      if (state!=='playing') return;
+      if (dist < 10) return;
       var power = Math.min(dist/20, 22), ln = dist || 1;
-      darts.push({ x:aimStart.x, y:aimStart.y, vx:(dx/ln)*power, vy:(dy/ln)*power, life:90, hit:false });
-      sfxThrow(); aiming=false;
-    });
-    canvas.addEventListener('mouseleave', function(){ aiming=false; });
+      darts.push({ x:aimStart.x, y:aimStart.y, vx:(dx/ln)*power, vy:(dy/ln)*power, life:90, hits:0 });
+      sfxThrow();
+    }
+    if (window.PointerEvent){
+      canvas.addEventListener('pointerdown', function(e){
+        if (state!=='playing') return;
+        aiming = true; aimStart = getMouse(e); aimCurrent = aimStart;
+        capturedPointerId = e.pointerId;
+        try { canvas.setPointerCapture(e.pointerId); } catch(err){}
+        e.preventDefault();
+      });
+      canvas.addEventListener('pointermove', function(e){
+        if (!aiming) return;
+        aimCurrent = getMouse(e);
+      });
+      canvas.addEventListener('pointerup', function(e){
+        try { if (capturedPointerId !== null) canvas.releasePointerCapture(capturedPointerId); } catch(err){}
+        capturedPointerId = null;
+        releaseShot(e);
+      });
+      canvas.addEventListener('pointercancel', function(e){
+        try { if (capturedPointerId !== null) canvas.releasePointerCapture(capturedPointerId); } catch(err){}
+        capturedPointerId = null;
+        releaseShot(e);
+      });
+    } else {
+      canvas.addEventListener('mousedown', function(e){
+        if (state!=='playing') return;
+        aiming=true; aimStart=getMouse(e); aimCurrent=aimStart;
+        e.preventDefault();
+      });
+      window.addEventListener('mousemove', function(e){ if (!aiming) return; aimCurrent = getMouse(e); });
+      window.addEventListener('mouseup', releaseShot);
+    }
+    window.addEventListener('blur', function(e){ if (aiming) releaseShot({ clientX: -9999, clientY: -9999 }); });
     startBtn.addEventListener('click', startGame);
     restartBtn.addEventListener('click', startGame);
     requestAnimationFrame(loop);
